@@ -15,6 +15,11 @@ export interface Book {
   finishedAt?: number
   outline?: string
   mySummary?: string
+  /** 历次总结的历史版本（含保存时间），最新一份等于 mySummary */
+  summaryHistory?: { text: string; savedAt: number }[]
+  /** 按页数跟踪进度：当前页 / 总页数，progress 由它自动算出 */
+  currentPage?: number
+  totalPages?: number
 }
 
 export interface Note {

@@ -124,29 +124,24 @@ export default function BookDetail() {
         </div>
 
         {book.status !== 'want' && (
-          <div className="mt-4">
-            <div className="flex items-center justify-between text-sm text-stone-600">
-              <span>进度 {book.progress}%{book.startedAt && book.status === 'reading' ? ` · 已投入 ${daysSince(book.startedAt)} 天` : ''}</span>
-              <span className="text-xs text-stone-400">还剩 {100 - book.progress}% 通关</span>
-            </div>
-            <Progress value={book.progress} className="mt-1.5 h-2.5" />
-            <div className="mt-2 flex gap-2">
-              {[10, 20].map((d) => (
-                <Button key={d} size="sm" variant="outline" onClick={() => setProgress(book.id, book.progress + d)}>
-                  +{d}%
-                </Button>
-              ))}
-              <Button size="sm" variant="outline" onClick={() => setProgress(book.id, 100)}>读完了 🎉</Button>
-            </div>
-          </div>
+          <ProgressTracker book={book} onSetProgress={(p, extra) => { setProgress(book.id, p); if (extra) updateBook(book.id, extra) }} />
         )}
       </Card>
 
-      {/* AI 大纲 */}
-      <OutlineSection book={book} aiKey={aiKey} busy={aiBusy} onGenerate={doOutline} />
+      {/* 大纲（可直接粘贴 Kimi 给的，也可用 DeepSeek 生成） */}
+      <OutlineSection book={book} aiKey={aiKey} busy={aiBusy} onGenerate={doOutline} onSave={(s) => updateBook(book.id, { outline: s })} />
 
-      {/* 我的总结 */}
-      <SummarySection book={book} aiKey={aiKey} notes={db.notes.filter((n) => n.bookId === book.id)} onSave={(s) => updateBook(book.id, { mySummary: s })} />
+      {/* 我的总结（每次保存记一个历史版本） */}
+      <SummarySection
+        book={book}
+        aiKey={aiKey}
+        notes={db.notes.filter((n) => n.bookId === book.id)}
+        onSave={(s) => {
+          const history = [...(book.summaryHistory ?? [])]
+          if (s && s !== book.mySummary) history.push({ text: s, savedAt: Date.now() })
+          updateBook(book.id, { mySummary: s, summaryHistory: history })
+        }}
+      />
 
       {/* 行动清单 */}
       {actions.length > 0 && (
@@ -249,22 +244,76 @@ export default function BookDetail() {
   )
 }
 
-/* ---------- AI 大纲 ---------- */
-function OutlineSection({ book, aiKey, busy, onGenerate }: { book: Book; aiKey: string; busy: boolean; onGenerate: () => void }) {
+/* ---------- 进度跟踪（按页数，比拍脑袋点 +10% 准） ---------- */
+function ProgressTracker({ book, onSetProgress }: { book: Book; onSetProgress: (progress: number, extra?: Partial<Book>) => void }) {
+  const [cur, setCur] = useState(book.currentPage ? String(book.currentPage) : '')
+  const [total, setTotal] = useState(book.totalPages ? String(book.totalPages) : '')
+
+  const applyPages = () => {
+    const c = parseInt(cur, 10)
+    const t = parseInt(total, 10)
+    if (!c || !t || t <= 0) return
+    const p = Math.min(100, Math.round((Math.min(c, t) / t) * 100))
+    onSetProgress(p, { currentPage: Math.min(c, t), totalPages: t })
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center justify-between text-sm text-stone-600">
+        <span>
+          进度 {book.progress}%
+          {book.totalPages ? `（${book.currentPage ?? 0}/${book.totalPages} 页）` : ''}
+          {book.startedAt && book.status === 'reading' ? ` · 已投入 ${daysSince(book.startedAt)} 天` : ''}
+        </span>
+        <span className="text-xs text-stone-400">还剩 {100 - book.progress}% 通关</span>
+      </div>
+      <Progress value={book.progress} className="mt-1.5 h-2.5" />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-stone-500">读到</span>
+        <input
+          className="h-8 w-16 rounded-md border px-2 text-sm"
+          inputMode="numeric" placeholder="页码" value={cur}
+          onChange={(e) => setCur(e.target.value.replace(/\D/g, ''))}
+        />
+        <span className="text-xs text-stone-500">页 / 全书</span>
+        <input
+          className="h-8 w-16 rounded-md border px-2 text-sm"
+          inputMode="numeric" placeholder="总页数" value={total}
+          onChange={(e) => setTotal(e.target.value.replace(/\D/g, ''))}
+        />
+        <span className="text-xs text-stone-500">页</span>
+        <Button size="sm" variant="outline" onClick={applyPages} disabled={!cur || !total}>更新进度</Button>
+        <Button size="sm" variant="outline" onClick={() => onSetProgress(100)}>读完了 🎉</Button>
+      </div>
+      <p className="mt-1 text-xs text-stone-400">电纸书上看的是位置/百分比的话，总页数填 100、页码填当前百分比即可</p>
+    </div>
+  )
+}
+
+/* ---------- 大纲（可粘贴 Kimi 的产出，也可用 DeepSeek 生成） ---------- */
+function OutlineSection({ book, aiKey, busy, onGenerate, onSave }: { book: Book; aiKey: string; busy: boolean; onGenerate: () => void; onSave: (s: string) => void }) {
   const [open, setOpen] = useState(true)
-  if (!book.outline) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  const startEdit = () => { setDraft(book.outline ?? ''); setEditing(true) }
+
+  if (!book.outline && !editing) {
     return (
       <Card className="mt-3 border-dashed p-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-stone-500">📑 AI 大纲：梳理全书结构，帮你抓骨架</p>
-          {aiKey ? (
-            <Button size="sm" variant="outline" onClick={onGenerate} disabled={busy}>
-              {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1 h-4 w-4" />}
-              生成大纲
-            </Button>
-          ) : (
-            <span className="text-xs text-stone-400">填 DeepSeek Key 后可用</span>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-stone-500">📑 大纲：梳理全书结构，帮你抓骨架</p>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={startEdit}>粘贴大纲</Button>
+            {aiKey ? (
+              <Button size="sm" variant="outline" onClick={onGenerate} disabled={busy}>
+                {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1 h-4 w-4" />}
+                AI 生成
+              </Button>
+            ) : (
+              <span className="self-center text-xs text-stone-400">也可以直接把 Kimi 给你的大纲粘贴进来</span>
+            )}
+          </div>
         </div>
       </Card>
     )
@@ -274,25 +323,44 @@ function OutlineSection({ book, aiKey, busy, onGenerate }: { book: Book; aiKey: 
       <Collapsible open={open} onOpenChange={setOpen}>
         <div className="flex items-center justify-between">
           <CollapsibleTrigger className="flex items-center gap-1 text-sm font-semibold text-stone-700">
-            <ChevronDown className={`h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`} /> AI 大纲
+            <ChevronDown className={`h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`} /> 大纲
           </CollapsibleTrigger>
-          <Button size="sm" variant="ghost" onClick={onGenerate} disabled={busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : '重新生成'}
-          </Button>
+          {!editing && (
+            <div className="flex gap-1">
+              <Button size="sm" variant="ghost" onClick={startEdit}><Pencil className="mr-1 h-3.5 w-3.5" />编辑</Button>
+              {aiKey && (
+                <Button size="sm" variant="ghost" onClick={onGenerate} disabled={busy}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'AI 重新生成'}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
         <CollapsibleContent>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-stone-700">{book.outline}</p>
+          {editing ? (
+            <div className="mt-2 space-y-2">
+              <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={10} placeholder="把 Kimi 给你的大纲粘贴到这里" autoFocus />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => { onSave(draft.trim()); setEditing(false) }}>保存</Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>取消</Button>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-stone-700">{book.outline}</p>
+          )}
         </CollapsibleContent>
       </Collapsible>
     </Card>
   )
 }
 
-/* ---------- 我的总结 ---------- */
+/* ---------- 我的总结（含历次版本时间线） ---------- */
 function SummarySection({ book, aiKey, notes, onSave }: { book: Book; aiKey: string; notes: Note[]; onSave: (s: string) => void }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(book.mySummary ?? '')
   const [busy, setBusy] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const history = book.summaryHistory ?? []
 
   const aiDraft = async () => {
     if (!aiKey || notes.length === 0) return
@@ -310,6 +378,11 @@ function SummarySection({ book, aiKey, notes, onSave }: { book: Book; aiKey: str
       <div className="flex items-center justify-between">
         <h3 className="flex items-center gap-1 text-sm font-semibold text-stone-700">
           <BookOpenCheck className="h-4 w-4" /> 我的总结
+          {history.length > 1 && (
+            <button className="text-xs font-normal text-stone-400 underline" onClick={() => setShowHistory(!showHistory)}>
+              共 {history.length} 版
+            </button>
+          )}
         </h3>
         {!editing && (
           <div className="flex gap-1">
@@ -331,12 +404,26 @@ function SummarySection({ book, aiKey, notes, onSave }: { book: Book; aiKey: str
             <Button size="sm" onClick={() => { onSave(draft.trim()); setEditing(false) }}>保存</Button>
             <Button size="sm" variant="ghost" onClick={() => { setDraft(book.mySummary ?? ''); setEditing(false) }}>取消</Button>
           </div>
-          <p className="text-xs text-stone-400">AI 草稿只是参考，保存的是你的文字</p>
+          <p className="text-xs text-stone-400">每次保存都会留一个带时间的版本，可以回看自己的心路变化</p>
         </div>
       ) : book.mySummary ? (
         <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-stone-700">{book.mySummary}</p>
       ) : (
         <p className="mt-2 text-sm text-stone-400">读完后，用你自己的话给这本书做个总结。</p>
+      )}
+      {/* 历次总结时间线 */}
+      {showHistory && history.length > 0 && (
+        <div className="mt-3 space-y-2 border-t pt-3">
+          {[...history].reverse().map((h, i) => (
+            <div key={i} className="rounded-md bg-stone-50 p-2">
+              <p className="text-xs text-stone-400">
+                {new Date(h.savedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                {i === 0 ? ' · 当前版本' : ''}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-stone-600">{h.text}</p>
+            </div>
+          ))}
+        </div>
       )}
     </Card>
   )
