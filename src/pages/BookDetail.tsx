@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useStore } from '@/lib/store'
 import { daysSince, formatDate } from '@/lib/helpers'
 import { classifyNote, generateOutline, summaryDraft } from '@/lib/ai'
+import ChatPanel from '@/components/ChatPanel'
 import type { ActionStatus, Book, BookStatus, Note, NoteCategory } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -39,6 +40,7 @@ export default function BookDetail() {
   const [cat, setCat] = useState<NoteCategory>('观点')
   const [filter, setFilter] = useState<NoteCategory | '全部'>('全部')
   const [aiBusy, setAiBusy] = useState(false)
+  const [summaryInject, setSummaryInject] = useState<{ text: string; ts: number } | null>(null)
 
   const notes = useMemo(
     () => db.notes.filter((n) => n.bookId === id && (filter === '全部' || n.category === filter)),
@@ -136,11 +138,23 @@ export default function BookDetail() {
         book={book}
         aiKey={aiKey}
         notes={db.notes.filter((n) => n.bookId === book.id)}
+        injectDraft={summaryInject}
         onSave={(s) => {
           const history = [...(book.summaryHistory ?? [])]
           if (s && s !== book.mySummary) history.push({ text: s, savedAt: Date.now() })
           updateBook(book.id, { mySummary: s, summaryHistory: history })
         }}
+      />
+
+      {/* 和 AI 聊聊：对话式记录，AI 只提问不替你总结 */}
+      <ChatPanel
+        book={book}
+        aiKey={aiKey}
+        onSaveNote={(t) => {
+          const n = addNote(book.id, t, '观点')
+          updateNote(n.id, { polished: t })
+        }}
+        onSaveSummary={(t) => setSummaryInject({ text: t, ts: Date.now() })}
       />
 
       {/* 行动清单 */}
@@ -355,12 +369,20 @@ function OutlineSection({ book, aiKey, busy, onGenerate, onSave }: { book: Book;
 }
 
 /* ---------- 我的总结（含历次版本时间线） ---------- */
-function SummarySection({ book, aiKey, notes, onSave }: { book: Book; aiKey: string; notes: Note[]; onSave: (s: string) => void }) {
+function SummarySection({ book, aiKey, notes, injectDraft, onSave }: { book: Book; aiKey: string; notes: Note[]; injectDraft?: { text: string; ts: number } | null; onSave: (s: string) => void }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(book.mySummary ?? '')
   const [busy, setBusy] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const history = book.summaryHistory ?? []
+
+  // 从「和 AI 聊聊」提炼来的草稿：注入编辑框，由用户改完后保存
+  useEffect(() => {
+    if (injectDraft) {
+      setDraft(injectDraft.text)
+      setEditing(true)
+    }
+  }, [injectDraft])
 
   const aiDraft = async () => {
     if (!aiKey || notes.length === 0) return

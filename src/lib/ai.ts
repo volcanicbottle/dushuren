@@ -10,6 +10,19 @@ export class AIError extends Error {
 }
 
 async function chat(key: string, prompt: string, opts?: { json?: boolean; system?: string }): Promise<string> {
+  const messages = [
+    ...(opts?.system ? [{ role: 'system', content: opts.system }] : []),
+    { role: 'user', content: prompt },
+  ]
+  return chatMessages(key, messages, opts)
+}
+
+/** 多轮对话 */
+export async function chatMessages(
+  key: string,
+  messages: { role: string; content: string }[],
+  opts?: { json?: boolean },
+): Promise<string> {
   let res: Response
   try {
     res = await fetch(API_URL, {
@@ -17,10 +30,7 @@ async function chat(key: string, prompt: string, opts?: { json?: boolean; system
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model: MODEL,
-        messages: [
-          ...(opts?.system ? [{ role: 'system', content: opts.system }] : []),
-          { role: 'user', content: prompt },
-        ],
+        messages,
         ...(opts?.json ? { response_format: { type: 'json_object' } } : {}),
       }),
     })
