@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Loader2, MessageCircle, Save, BookOpenCheck, Send } from 'lucide-react'
+import VoiceButton from '@/components/VoiceButton'
 
 interface Msg { role: 'user' | 'assistant'; content: string }
 
@@ -128,6 +129,7 @@ export default function ChatPanel({
           className="min-h-[40px] flex-1 resize-none"
           rows={1}
         />
+        <VoiceButton onResult={(t) => setInput((prev) => prev + t)} disabled={busy} />
         <Button size="icon" className="h-10 w-10 shrink-0" onClick={send} disabled={!input.trim() || busy} aria-label="发送">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         </Button>

@@ -4,6 +4,7 @@ import { useStore } from '@/lib/store'
 import { daysSince, formatDate } from '@/lib/helpers'
 import { classifyNote, generateOutline, summaryDraft } from '@/lib/ai'
 import ChatPanel from '@/components/ChatPanel'
+import VoiceButton from '@/components/VoiceButton'
 import type { ActionStatus, Book, BookStatus, Note, NoteCategory } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -247,6 +248,7 @@ export default function BookDetail() {
               className="min-h-[44px] flex-1 resize-none"
               rows={1}
             />
+            <VoiceButton onResult={(t) => setText((prev) => prev + t)} />
             <Button size="icon" className="h-11 w-11 shrink-0" onClick={submitNote} disabled={!text.trim()} aria-label="发送">
               {aiBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
             </Button>
